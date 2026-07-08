@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Build Script
+      - name: Checkout Your Repository Files
         uses: actions/checkout@v4
 
       - name: Install Compiling Dependencies
@@ -30,7 +30,7 @@ jobs:
 
       - name: Apply Your Custom Configuration Layout
         run: |
-          cp surya_defconfig kernel-source/arch/arm64/configs/surya_defconfig
+          cp "$GITHUB_WORKSPACE/my_current_config" kernel-source/arch/arm64/configs/surya_defconfig
 
       - name: Download Google / Proton Clang Toolchain
         run: |
