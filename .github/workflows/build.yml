@@ -13,7 +13,7 @@ jobs:
       - name: Install Compiling Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential libncurses5-dev localmodconfig libssl-dev ccache bison flex libelf-dev clang lld python3
+          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev ccache bison flex libelf-dev clang lld python3
 
       - name: Clone Poco X3 NFC Kernel Source
         run: |
