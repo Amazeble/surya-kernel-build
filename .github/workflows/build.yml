@@ -15,29 +15,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc build-essential libncurses5-dev localmodconfig libssl-dev ccache bison flex libelf-dev clang lld python3
 
-      - name: Clone Poco X3 NFC Android 14 Source
+      - name: Clone Poco X3 NFC Kernel Source
         run: |
-          git clone --depth=1 -b lineage-21 https://github.com kernel-source || exit 1
+          git clone --depth=1 -b lineage-22.2 https://github.com kernel-source
 
       - name: Integrate KernelSU Source Code
         run: |
           cd kernel-source
-          curl -LSs "https://githubusercontent.com" | bash -s main || exit 1
+          curl -LSs "https://githubusercontent.com" | bash -s main
 
       - name: Apply Your Custom Configuration Layout
         run: |
-          cp surya_defconfig kernel-source/arch/arm64/configs/surya_defconfig || exit 1
+          cp surya_defconfig kernel-source/arch/arm64/configs/surya_defconfig
 
       - name: Download Google / Proton Clang Toolchain
         run: |
-          git clone --depth=1 https://github.com clang-compiler || exit 1
+          git clone --depth=1 https://github.com clang-compiler
 
-      - name: Compile the Kernel
+      - name: Compile the Kernel Image
         run: |
           cd kernel-source
           export PATH=$GITHUB_WORKSPACE/clang-compiler/bin:$PATH
-          make ARCH=arm64 O=out clean
-          make ARCH=arm64 O=out mrproper
+          mkdir -p out
           make ARCH=arm64 O=out surya_defconfig
           make -j$(nproc --all) ARCH=arm64 O=out \
             CC=clang \
