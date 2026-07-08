@@ -17,20 +17,20 @@ jobs:
 
       - name: Clone Poco X3 NFC Android 14 Source
         run: |
-          git clone --depth=1 -b lineage-21 https://github.com kernel-source
+          git clone --depth=1 -b lineage-21 https://github.com kernel-source || exit 1
 
       - name: Integrate KernelSU Source Code
         run: |
           cd kernel-source
-          curl -LSs "https://githubusercontent.com" | bash -s main
+          curl -LSs "https://githubusercontent.com" | bash -s main || exit 1
 
       - name: Apply Your Custom Configuration Layout
         run: |
-          cp surya_defconfig kernel-source/arch/arm64/configs/surya_defconfig
+          cp surya_defconfig kernel-source/arch/arm64/configs/surya_defconfig || exit 1
 
       - name: Download Google / Proton Clang Toolchain
         run: |
-          git clone --depth=1 https://github.com clang-compiler
+          git clone --depth=1 https://github.com clang-compiler || exit 1
 
       - name: Compile the Kernel
         run: |
