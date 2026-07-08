@@ -17,14 +17,16 @@ jobs:
 
       - name: Clone Poco X3 NFC Kernel Source
         run: |
-          URL_PART="LineageOS/android_kernel_xiaomi_surya.git"
-          git clone --depth=1 -b lineage-22.2 "https://github.com" kernel-source
+          DOMAIN="https://github.com"
+          PATH_PART="/LineageOS/android_kernel_xiaomi_surya.git"
+          git clone --depth=1 -b lineage-22.2 "${DOMAIN}${PATH_PART}" kernel-source
 
       - name: Integrate KernelSU Source Code
         run: |
           cd kernel-source
-          KSU_PART="tiann/KernelSU/main/kernel/setup.sh"
-          curl -LSs "https://githubusercontent.com" | bash -s main
+          DOMAIN="https://githubusercontent.com"
+          PATH_PART="/tiann/KernelSU/main/kernel/setup.sh"
+          curl -LSs "${DOMAIN}${PATH_PART}" | bash -s main
 
       - name: Apply Your Custom Configuration Layout
         run: |
@@ -32,8 +34,9 @@ jobs:
 
       - name: Download Google / Proton Clang Toolchain
         run: |
-          CLANG_PART="kdrag0n/proton-clang.git"
-          git clone --depth=1 "https://github.com" clang-compiler
+          DOMAIN="https://github.com"
+          PATH_PART="/kdrag0n/proton-clang.git"
+          git clone --depth=1 "${DOMAIN}${PATH_PART}" clang-compiler
 
       - name: Compile the Kernel Image
         run: |
@@ -49,8 +52,9 @@ jobs:
 
       - name: Package with AnyKernel3
         run: |
-          AK3_PART="osm0sis/AnyKernel3.git"
-          git clone "https://github.com"
+          DOMAIN="https://github.com"
+          PATH_PART="/osm0sis/AnyKernel3.git"
+          git clone "${DOMAIN}${PATH_PART}"
           cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/out/arch/arm64/boot/Image AnyKernel3/
           cd AnyKernel3
           zip -r9 ../surya-custom-kernel.zip *
