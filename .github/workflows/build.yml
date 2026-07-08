@@ -1,0 +1,58 @@
+name: Build Surya Android 14 Kernel
+
+on:
+  workflow_dispatch: # Allows manual one-click start
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Build Script
+      uses: actions/checkout@v4
+
+    - name: Install Compiling Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc build-essential libncurses5-dev localmodconfig libssl-dev ccache bison flex libelf-dev clang lld
+
+    - name: Clone Poco X3 NFC Android 14 Source
+      run: |
+        git clone --depth=1 -b lineage-21 https://github.com kernel-source
+
+    - name: Integrate KernelSU Source Code
+      run: |
+        cd kernel-source
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+
+    - name: Apply Your Custom Configuration Layout
+      run: |
+        cp surya_defconfig kernel-source/arch/arm64/configs/surya_defconfig
+
+    - name: Download Google / Proton Clang Toolchain
+      run: |
+        git clone --depth=1 https://github.com clang-compiler
+
+    - name: Compile the Kernel
+      run: |
+        cd kernel-source
+        export PATH=$GITHUB_WORKSPACE/clang-compiler/bin:$PATH
+        make ARCH=arm64 O=out surya_defconfig
+        make -j$(nproc --all) ARCH=arm64 O=out \
+          CC=clang \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+    - name: Package with AnyKernel3 (Flashable Zip Form)
+      run: |
+        git clone https://github.com
+        cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        cd AnyKernel3
+        zip -r9 ../surya-custom-kernel.zip *
+
+    - name: Upload Finished Flashable Kernel Zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: Surya-Custom-Kernel-Package
+        path: surya-custom-kernel.zip
+
