@@ -38,15 +38,14 @@ jobs:
 
       - name: Download Google / Proton Clang Toolchain
         run: |
-          DOMAIN="https://github.com"
-          PATH_PART="/kdrag0n/proton-clang.git"
-          git clone --depth=1 "${DOMAIN}${PATH_PART}" clang-compiler
+          # Skip external clang download - use system clang from apt instead
+          # External pre-built clang has glibc compatibility issues with ubuntu-latest
+          echo "Using system clang toolchain"
 
       - name: Compile the Kernel Image
         run: |
           set -e
           cd kernel-source
-          export PATH=$GITHUB_WORKSPACE/clang-compiler/bin:$PATH
           mkdir -p out
           make ARCH=arm64 O=out surya_defconfig
           make -j$(nproc --all) ARCH=arm64 O=out \
