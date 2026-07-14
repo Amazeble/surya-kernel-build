@@ -1,4 +1,4 @@
 ```
-# CI/CD
-.github/
+# GitHub workflow artifacts
+.github/workflows/build.yml
 ```
