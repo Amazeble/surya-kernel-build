@@ -13,7 +13,7 @@ jobs:
       - name: Install Compiling Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev ccache bison flex libelf-dev clang lld python3
+          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev ccache bison flex libelf-dev clang lld python3 wget zip unzip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
       - name: Clone Poco X3 NFC Kernel Source
         run: |
@@ -24,13 +24,17 @@ jobs:
       - name: Integrate KernelSU Source Code
         run: |
           cd kernel-source
-          DOMAIN="https://githubusercontent.com"
+          DOMAIN="https://raw.githubusercontent.com"
           PATH_PART="/tiann/KernelSU/main/kernel/setup.sh"
           curl -LSs "${DOMAIN}${PATH_PART}" | bash -s main
 
       - name: Apply Your Custom Configuration Layout
         run: |
-          cp "$GITHUB_WORKSPACE/my_current_config" kernel-source/arch/arm64/configs/surya_defconfig
+          if [ -f "$GITHUB_WORKSPACE/my_current_config" ]; then
+            cp "$GITHUB_WORKSPACE/my_current_config" kernel-source/arch/arm64/configs/surya_defconfig
+          else
+            echo "Warning: my_current_config not found, using existing defconfig"
+          fi
 
       - name: Download Google / Proton Clang Toolchain
         run: |
@@ -40,6 +44,7 @@ jobs:
 
       - name: Compile the Kernel Image
         run: |
+          set -e
           cd kernel-source
           export PATH=$GITHUB_WORKSPACE/clang-compiler/bin:$PATH
           mkdir -p out
@@ -52,10 +57,20 @@ jobs:
 
       - name: Package with AnyKernel3
         run: |
+          set -e
           DOMAIN="https://github.com"
           PATH_PART="/osm0sis/AnyKernel3.git"
           git clone "${DOMAIN}${PATH_PART}"
-          cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/out/arch/arm64/boot/Image AnyKernel3/
+          if [ -f kernel-source/out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          elif [ -f kernel-source/out/arch/arm64/boot/Image.gz ]; then
+            cp kernel-source/out/arch/arm64/boot/Image.gz AnyKernel3/
+          elif [ -f kernel-source/out/arch/arm64/boot/Image ]; then
+            cp kernel-source/out/arch/arm64/boot/Image AnyKernel3/
+          else
+            echo "Error: No kernel image found!"
+            exit 1
+          fi
           cd AnyKernel3
           zip -r9 ../surya-custom-kernel.zip *
 
