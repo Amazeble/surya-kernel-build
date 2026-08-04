@@ -64,10 +64,21 @@ jobs:
               # Fix 2: Remove duplicate empty lines that might confuse parser
               sed -i '/^$/N;/^\n$/d' "$file"
               
-              # Fix 3: Check for common DTS syntax issues and fix them
-              # Missing semicolons after properties (basic heuristic)
-              # This is tricky, so we'll be conservative
+              # Fix 3: Add missing semicolons at end of property lines
+              # This fixes the most common DTS syntax error: missing ';' before '};'
+              # Pattern: line with value but no semicolon, followed by closing brace
+              sed -i ':a;N;$!ba;s/\([0-9a-fx<>"]\+\)\s*};/\1;\n};/g' "$file"
               
+              # Fix 4: Ensure all property assignments end with semicolon
+              # Match lines like: compatible = "string"  ->  compatible = "string";
+              sed -i 's/\(=\s*[^;{]*\)\s*$/\1;/' "$file"
+              
+              # Fix 5: Clean up duplicate semicolons
+              sed -i 's/;;/;/g' "$file"
+              
+              # Show the fixed content around line 15 (where error occurred)
+              echo "  -> Fixed content around line 15:"
+              sed -n '10,20p' "$file"
               echo "  -> Applied automatic fixes to $file"
             else
               echo "  -> $file not found, skipping"
