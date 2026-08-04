@@ -36,6 +36,23 @@ jobs:
             echo "Warning: my_current_config not found, using existing defconfig"
           fi
 
+      - name: Fix Broken Device Tree Overlay
+        run: |
+          # Remove or disable the broken thermal overlay DTS file causing syntax errors
+          OVERLAY_FILE="kernel-source/arch/arm64/boot/dts/qcom/sdmmagpie-thermal-overlay.dtsi"
+          if [ -f "$OVERLAY_FILE" ]; then
+            echo "Disabling broken sdmmagpie-thermal-overlay.dtsi..."
+            mv "$OVERLAY_FILE" "${OVERLAY_FILE}.bak"
+            echo "// Disabled due to syntax errors" > "$OVERLAY_FILE"
+          fi
+          
+          # Also check for any Makefile references and disable them
+          DTS_MAKEFILE="kernel-source/arch/arm64/boot/dts/qcom/Makefile"
+          if [ -f "$DTS_MAKEFILE" ]; then
+            sed -i 's/sdmmagpie-thermal-overlay\.dtbo/# sdmmagpie-thermal-overlay.dtbo/g' "$DTS_MAKEFILE"
+            sed -i 's/sdmmagpie-thermal-overlay\.dtsi/# sdmmagpie-thermal-overlay.dtsi/g' "$DTS_MAKEFILE"
+          fi
+
       - name: Download Google / Proton Clang Toolchain
         run: |
           # Skip external clang download - use system clang from apt instead
