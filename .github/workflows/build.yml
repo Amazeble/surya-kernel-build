@@ -64,16 +64,37 @@ jobs:
               # Fix 2: Remove duplicate empty lines that might confuse parser
               sed -i '/^$/N;/^\n$/d' "$file"
               
-              # Fix 3: Add missing semicolons at end of property lines
-              # This fixes the most common DTS syntax error: missing ';' before '};'
-              # Pattern: line with value but no semicolon, followed by closing brace
-              sed -i ':a;N;$!ba;s/\([0-9a-fx<>"]\+\)\s*};/\1;\n};/g' "$file"
+              # Fix 3: Use Python for robust semicolon fixing
+              python3 << EOF
+import re
+
+with open("$file", "r") as f:
+    content = f.read()
+
+# Fix missing semicolons after property values
+# Pattern: word = value (without semicolon) followed by newline and closing brace or new property
+content = re.sub(r'(\s*=\s*<[^>]+>)\s*\n(\s*[};])', r'\1;\n\2', content)
+content = re.sub(r'(\s*=\s*"[^"]+")\s*\n(\s*[};])', r'\1;\n\2', content)
+content = re.sub(r'(\s*=\s*\w+)\s*\n(\s*[};])', r'\1;\n\2', content)
+
+# Ensure all property lines end with semicolon if they don't end with { or }
+lines = content.split('\n')
+fixed_lines = []
+for line in lines:
+    stripped = line.strip()
+    # Check if it's a property assignment line
+    if re.match(r'^[\w-]+\s*=', stripped):
+        if not stripped.endswith(';') and not stripped.endswith('{') and not stripped.endswith('}'):
+            line = line.rstrip() + ';'
+    fixed_lines.append(line)
+
+content = '\n'.join(fixed_lines)
+
+with open("$file", "w") as f:
+    f.write(content)
+EOF
               
-              # Fix 4: Ensure all property assignments end with semicolon
-              # Match lines like: compatible = "string"  ->  compatible = "string";
-              sed -i 's/\(=\s*[^;{]*\)\s*$/\1;/' "$file"
-              
-              # Fix 5: Clean up duplicate semicolons
+              # Fix 4: Clean up duplicate semicolons
               sed -i 's/;;/;/g' "$file"
               
               # Show the fixed content around line 15 (where error occurred)
