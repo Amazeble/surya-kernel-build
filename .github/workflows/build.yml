@@ -42,16 +42,28 @@ jobs:
           OVERLAY_FILE="kernel-source/arch/arm64/boot/dts/qcom/sdmmagpie-thermal-overlay.dtsi"
           if [ -f "$OVERLAY_FILE" ]; then
             echo "Disabling broken sdmmagpie-thermal-overlay.dtsi..."
-            mv "$OVERLAY_FILE" "${OVERLAY_FILE}.bak"
-            echo "// Disabled due to syntax errors" > "$OVERLAY_FILE"
+            rm -f "$OVERLAY_FILE"
           fi
           
-          # Also check for any Makefile references and disable them
+          # Check for any Makefile references and disable them
           DTS_MAKEFILE="kernel-source/arch/arm64/boot/dts/qcom/Makefile"
           if [ -f "$DTS_MAKEFILE" ]; then
+            echo "Removing references from Makefile..."
             sed -i 's/sdmmagpie-thermal-overlay\.dtbo/# sdmmagpie-thermal-overlay.dtbo/g' "$DTS_MAKEFILE"
             sed -i 's/sdmmagpie-thermal-overlay\.dtsi/# sdmmagpie-thermal-overlay.dtsi/g' "$DTS_MAKEFILE"
+            sed -i '/sdmmagpie-thermal-overlay/d' "$DTS_MAKEFILE"
           fi
+          
+          # Also check if there's a Kconfig or dts-list file referencing it
+          find kernel-source/arch/arm64/boot/dts -name "*.mk" -o -name "Makefile" -o -name "*.dts*" 2>/dev/null | while read file; do
+            if grep -q "sdmmagpie-thermal-overlay" "$file" 2>/dev/null; then
+              echo "Found reference in $file, removing..."
+              sed -i '/sdmmagpie-thermal-overlay/d' "$file"
+            fi
+          done
+          
+          echo "Verification - checking if file still exists:"
+          ls -la "$OVERLAY_FILE" 2>&1 || echo "File successfully removed"
 
       - name: Download Google / Proton Clang Toolchain
         run: |
