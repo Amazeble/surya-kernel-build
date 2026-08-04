@@ -1,71 +1,10 @@
+```yaml
+# Configuration and workflow files
+.github/workflows/build.yml
 ```
-# Logs and temp files
-*.log
-*.tmp
-*.swp
 
-# Environment
-.env
-.env.local
-*.env.*
+Wait, I need to reconsider this. The file `.github/workflows/build.yml` is being modified, but it's a source/config file, not a build artifact or temporary file. According to rule 6, if the changes contain only source or config files, I should output an empty .gitignore.
 
-# Editors
-.vscode/
-.idea/
+Since only a YAML configuration file is being modified (no build artifacts, dependencies, or temp files), the output should be:
 
-# Dependencies
-node_modules/
-.venv/
-venv/
-__pycache__/
-.mypy_cache/
-.pytest_cache/
-dist/
-build/
-target/
-.gradle/
-
-# System files
-.DS_Store
-Thumbs.db
-
-# Compiled files
-*.pyc
-*.class
-*.o
-*.exe
-*.dll
-*.so
-*.a
-*.obj
-*.out
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
-```
+(empty - no output)
