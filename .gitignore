@@ -1,10 +1,4 @@
-```yaml
-# Configuration and workflow files
-.github/workflows/build.yml
 ```
-
-Wait, I need to reconsider this. The file `.github/workflows/build.yml` is being modified, but it's a source/config file, not a build artifact or temporary file. According to rule 6, if the changes contain only source or config files, I should output an empty .gitignore.
-
-Since only a YAML configuration file is being modified (no build artifacts, dependencies, or temp files), the output should be:
-
-(empty - no output)
+# CI/CD
+.github/
+```
