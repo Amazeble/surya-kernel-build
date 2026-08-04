@@ -47,28 +47,48 @@ jobs:
           set -e
           cd kernel-source
           mkdir -p out
+          echo "=== Starting kernel configuration ==="
           make ARCH=arm64 O=out surya_defconfig
-          make -j$(nproc --all) ARCH=arm64 O=out \
+          echo "=== Starting kernel compilation ==="
+          if ! make -j$(nproc --all) ARCH=arm64 O=out \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            2>&1 | tee ../build.log || (tail -n 100 ../build.log; exit 1)
+            2>&1 | tee ../build.log; then
+            echo "=== Kernel compilation FAILED ==="
+            echo "=== Last 200 lines of build log ==="
+            tail -n 200 ../build.log
+            echo "=== Searching for error patterns ==="
+            grep -i "error:" ../build.log | tail -50 || true
+            exit 1
+          fi
+          echo "=== Kernel compilation completed successfully ==="
+          ls -lh out/arch/arm64/boot/
 
       - name: Package with AnyKernel3
         run: |
           set -e
           DOMAIN="https://github.com"
           PATH_PART="/osm0sis/AnyKernel3.git"
-          git clone "${DOMAIN}${PATH_PART}"
+          git clone --depth=1 "${DOMAIN}${PATH_PART}"
+          
+          echo "=== Checking for kernel image files ==="
+          ls -lh kernel-source/out/arch/arm64/boot/ || true
+          
           if [ -f kernel-source/out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo "Found Image.gz-dtb, copying to AnyKernel3..."
             cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
           elif [ -f kernel-source/out/arch/arm64/boot/Image.gz ]; then
+            echo "Found Image.gz, copying to AnyKernel3..."
             cp kernel-source/out/arch/arm64/boot/Image.gz AnyKernel3/
           elif [ -f kernel-source/out/arch/arm64/boot/Image ]; then
+            echo "Found Image, copying to AnyKernel3..."
             cp kernel-source/out/arch/arm64/boot/Image AnyKernel3/
           else
             echo "Error: No kernel image found!"
+            echo "Build output directory contents:"
+            find kernel-source/out -name "Image*" -type f 2>/dev/null || echo "No Image files found in out directory"
             exit 1
           fi
           cd AnyKernel3
