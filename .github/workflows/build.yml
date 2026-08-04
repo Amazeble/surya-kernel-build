@@ -36,13 +36,20 @@ jobs:
             echo "Warning: my_current_config not found, using existing defconfig"
           fi
 
-      - name: Fix Broken Device Tree Overlay
+      - name: Fix Broken Device Tree Overlays
         run: |
           # Remove or disable the broken thermal overlay DTS file causing syntax errors
           OVERLAY_FILE="kernel-source/arch/arm64/boot/dts/qcom/sdmmagpie-thermal-overlay.dtsi"
           if [ -f "$OVERLAY_FILE" ]; then
             echo "Disabling broken sdmmagpie-thermal-overlay.dtsi..."
             rm -f "$OVERLAY_FILE"
+          fi
+          
+          # Remove the broken dsi-panel-sim-video.dtsi file causing syntax errors
+          PANEL_FILE="kernel-source/arch/arm64/boot/dts/qcom/dsi-panel-sim-video.dtsi"
+          if [ -f "$PANEL_FILE" ]; then
+            echo "Disabling broken dsi-panel-sim-video.dtsi..."
+            rm -f "$PANEL_FILE"
           fi
           
           # Check for any Makefile references and disable them
@@ -52,18 +59,22 @@ jobs:
             sed -i 's/sdmmagpie-thermal-overlay\.dtbo/# sdmmagpie-thermal-overlay.dtbo/g' "$DTS_MAKEFILE"
             sed -i 's/sdmmagpie-thermal-overlay\.dtsi/# sdmmagpie-thermal-overlay.dtsi/g' "$DTS_MAKEFILE"
             sed -i '/sdmmagpie-thermal-overlay/d' "$DTS_MAKEFILE"
+            sed -i 's/dsi-panel-sim-video\.dtbo/# dsi-panel-sim-video.dtbo/g' "$DTS_MAKEFILE"
+            sed -i 's/dsi-panel-sim-video\.dtsi/# dsi-panel-sim-video.dtsi/g' "$DTS_MAKEFILE"
+            sed -i '/dsi-panel-sim-video/d' "$DTS_MAKEFILE"
           fi
           
           # Also check if there's a Kconfig or dts-list file referencing it
           find kernel-source/arch/arm64/boot/dts -name "*.mk" -o -name "Makefile" -o -name "*.dts*" 2>/dev/null | while read file; do
-            if grep -q "sdmmagpie-thermal-overlay" "$file" 2>/dev/null; then
+            if grep -q "sdmmagpie-thermal-overlay\|dsi-panel-sim-video" "$file" 2>/dev/null; then
               echo "Found reference in $file, removing..."
-              sed -i '/sdmmagpie-thermal-overlay/d' "$file"
+              sed -i '/sdmmagpie-thermal-overlay\|dsi-panel-sim-video/d' "$file"
             fi
           done
           
-          echo "Verification - checking if file still exists:"
-          ls -la "$OVERLAY_FILE" 2>&1 || echo "File successfully removed"
+          echo "Verification - checking if files still exist:"
+          ls -la "$OVERLAY_FILE" 2>&1 || echo "sdmmagpie-thermal-overlay.dtsi successfully removed"
+          ls -la "$PANEL_FILE" 2>&1 || echo "dsi-panel-sim-video.dtsi successfully removed"
 
       - name: Download Google / Proton Clang Toolchain
         run: |
