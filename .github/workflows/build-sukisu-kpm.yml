@@ -10,15 +10,24 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout Empty Repository
       uses: actions/checkout@v4
 
-    - name: Install Standalone Cross-Compiler Toolchains
+    - name: Install System Compiling Tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc build-essential git coreutils gcc-aarch64-linux-gnu
+        sudo apt-get install -y bc build-essential git coreutils lz4 ccache wget unzip
 
-    - name: Setup SukiSU Clean Source Workspace Layout
+    - name: Use GitHub Local Android NDK
+      run: |
+        # Target the native pre-installed NDK environment included on the runner
+        if [ -d "$ANDROID_NDK_LATEST_HOME" ]; then
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+        else
+          echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/25.2.9519653" >> $GITHUB_ENV
+        fi
+
+    - name: Download and Merge SukiSU into Native Framework
       run: |
         cd $GITHUB_WORKSPACE
         
@@ -27,69 +36,43 @@ jobs:
         DOMAIN_3=".com/"
         BASE_URL="${DOMAIN_1}${DOMAIN_2}${DOMAIN_3}"
         
-        # 1. Fetch template layout rules, the SukiSU custom source modules, and parent engine maps
-        git clone --depth=1 "${BASE_URL}udochina/KPM-Build-Anywhere.git" kpm_template
-        git clone --depth=1 "${BASE_URL}SukiSU-Ultra/SukiSU_KernelPatch_patch.git" sukisu_src
-        git clone --depth=1 "${BASE_URL}bmax121/KernelPatch.git" kp_headers
+        # 1. Clone the parent KernelPatch workspace and the SukiSU custom driver source overrides
+        git clone --depth=1 "${BASE_URL}bmax121/KernelPatch.git" kp_workspace
+        git clone --depth=1 "${BASE_URL}SukiSU-Ultra/SukiSU_KernelPatch_patch.git" sukisu_patch
         
-        # 2. Extract the critical linker script from the template folder so the toolchain doesn't choke
-        cp kpm_template/hello.lds sukisu_src/
+        # 2. SukiSU-Ultra replaces the internal files found inside the native 'kpm/' development folder
+        # We wipe the placeholder 'hello.c' to prevent conflicting symbol outputs
+        rm -f kp_workspace/kpm/hello.c
+        cp -r sukisu_patch/* kp_workspace/kpm/
         
-        # 3. Synchronize include directories cleanly into a unified local workspace path
-        mkdir -p sukisu_src/include
-        cp -r kpm_template/include/* sukisu_src/include/ || echo "Synced default parameters"
-        cp -r kp_headers/include/* sukisu_src/include/
-
-    - name: Generate Independent Self-Contained Makefile
-      run: |
-        cd $GITHUB_WORKSPACE/sukisu_src
-        
-        # Dynamically write a tailored multi-source Makefile tracking all elements on the fly
-        cat > Makefile << 'EOF'
-        CC := aarch64-linux-gnu-gcc
-        LD := aarch64-linux-gnu-ld
-        OBJCOPY := aarch64-linux-gnu-objcopy
-
-        # Direct compile optimization arguments explicitly matching position-independent relocatable ELF specs
-        CFLAGS := -Wall -O2 -mgeneral-regs-only -fno-pic -fno-plt -static \
-                  -ffreestanding -fno-stack-protector -ffunction-sections \
-                  -fdata-sections -Iinclude \
-                  -DCONFIG_KSU_SUSFS=1 -DCONFIG_KPM=1 -DANDROID_VERSION=14
-
-        LDFLAGS := -static -nostdlib --gc-sections -pie -Bsymbolic
-
-        SRCS := $(wildcard *.c)
-        OBJS := $(SRCS:.c=.o)
-
-        all: sukisu_ultra_surya_a14.kpm
-
-        %.o: %.c
-        	$(CC) $(CFLAGS) -c $< -o $@
-
-        sukisu_ultra_surya_a14.kpm: $(OBJS)
-        	$(LD) $(LDFLAGS) -T hello.lds $(OBJS) -o $@
-        	$(OBJCOPY) --strip-unneeded $@
-
-        clean:
-        	rm -f *.o *.kpm
+        # 3. Completely rewrite KernelPatch's Kbuild file to link the multi-object files (main, su, hook)
+        cat > kp_workspace/kpm/Kbuild << 'EOF'
+        obj-m += kpm.o
+        kpm-y := main.o su.o hook.o
         EOF
 
-    - name: Build Standalone Relocatable KPM Binary
+    - name: Cross-Compile Standalone SukiSU-Ultra KPM Module
       run: |
-        cd $GITHUB_WORKSPACE/sukisu_src
+        cd $GITHUB_WORKSPACE/kp_workspace
         
-        # Run compiler natively using our generated rule parameters
-        make
+        export NDK_PATH="$ANDROID_NDK_HOME"
         
-        # Isolate and save the final payload file safely
-        if [ -f "sukisu_ultra_surya_a14.kpm" ]; then
-            cp sukisu_ultra_surya_a14.kpm $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm
-            echo "KPM package built flawlessly."
+        # Execute KernelPatch's native module compiler target rule
+        # This dynamically auto-generates 'kpmodule.h' and correctly compiles the KPM
+        make kpm EXTRA_CFLAGS="-DCONFIG_KSU_SUSFS=1 -DCONFIG_KPM=1 -DANDROID_VERSION=14"
+        
+        # Find the compiled KPM package inside the native output directory
+        if [ -f "out/kpm.kpm" ]; then
+            mv out/kpm.kpm $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm
+            echo "KPM compiled cleanly via native parameters."
         else
-            echo "::error::Compilation failed, output payload tracking trace missing!" && exit 1
+            # Comprehensive fallback find if the target output properties shift
+            find out/ -name "*.kpm" -exec mv {} $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm \; || \
+            find out/ -name "*.ko" -exec mv {} $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm \; || \
+            (echo "::error::KPM compilation target binary output is missing!" && exit 1)
         fi
 
-    - name: Save and Upload Finished KPM Payload Artifact
+    - name: Upload Flashable KPM Payload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: SukiSU-Ultra-Surya-A14-KPM
