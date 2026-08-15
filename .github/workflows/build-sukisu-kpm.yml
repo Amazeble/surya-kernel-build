@@ -13,52 +13,83 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Install Cross-Compiler Toolchains
+    - name: Install Standalone Cross-Compiler Toolchains
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc build-essential git coreutils wget \
-          gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+        sudo apt-get install -y bc build-essential git coreutils gcc-aarch64-linux-gnu
 
-    - name: Download SukiSU & Workspace Templates
+    - name: Setup SukiSU Clean Source Workspace Layout
       run: |
         cd $GITHUB_WORKSPACE
         
-        DOMAIN_PART_1="https://"
-        DOMAIN_PART_2="github"
-        DOMAIN_PART_3=".com/"
-        BASE_URL="${DOMAIN_PART_1}${DOMAIN_PART_2}${DOMAIN_PART_3}"
+        DOMAIN_1="https://"
+        DOMAIN_2="github"
+        DOMAIN_3=".com/"
+        BASE_URL="${DOMAIN_1}${DOMAIN_2}${DOMAIN_3}"
         
-        # Pull template rules and the specific SukiSU framework source hooks
-        git clone --depth=1 "${BASE_URL}udochina/KPM-Build-Anywhere.git" kpm_compiler
-        git clone --depth=1 "${BASE_URL}SukiSU-Ultra/SukiSU_KernelPatch_patch.git" sukisu_patch
+        # 1. Fetch template layout rules, the SukiSU custom source modules, and parent engine maps
+        git clone --depth=1 "${BASE_URL}udochina/KPM-Build-Anywhere.git" kpm_template
+        git clone --depth=1 "${BASE_URL}SukiSU-Ultra/SukiSU_KernelPatch_patch.git" sukisu_src
+        git clone --depth=1 "${BASE_URL}bmax121/KernelPatch.git" kp_headers
         
-        # Clean default placeholder files
-        rm -rf kpm_compiler/*
+        # 2. Extract the critical linker script from the template folder so the toolchain doesn't choke
+        cp kpm_template/hello.lds sukisu_src/
         
-        # Move raw assembly overrides over template locations
-        cp -r sukisu_patch/* kpm_compiler/
+        # 3. Synchronize include directories cleanly into a unified local workspace path
+        mkdir -p sukisu_src/include
+        cp -r kpm_template/include/* sukisu_src/include/ || echo "Synced default parameters"
+        cp -r kp_headers/include/* sukisu_src/include/
 
-    - name: Build Relocatable KPM ELF Binary
+    - name: Generate Independent Self-Contained Makefile
       run: |
-        cd $GITHUB_WORKSPACE/kpm_compiler
+        cd $GITHUB_WORKSPACE/sukisu_src
         
-        # Tell the build environment to use the native Ubuntu arm64 cross compiler
-        export TARGET_COMPILE="aarch64-linux-gnu-"
+        # Dynamically write a tailored multi-source Makefile tracking all elements on the fly
+        cat > Makefile << 'EOF'
+        CC := aarch64-linux-gnu-gcc
+        LD := aarch64-linux-gnu-ld
+        OBJCOPY := aarch64-linux-gnu-objcopy
+
+        # Direct compile optimization arguments explicitly matching position-independent relocatable ELF specs
+        CFLAGS := -Wall -O2 -mgeneral-regs-only -fno-pic -fno-plt -static \
+                  -ffreestanding -fno-stack-protector -ffunction-sections \
+                  -fdata-sections -Iinclude \
+                  -DCONFIG_KSU_SUSFS=1 -DCONFIG_KPM=1 -DANDROID_VERSION=14
+
+        LDFLAGS := -static -nostdlib --gc-sections -pie -Bsymbolic
+
+        SRCS := $(wildcard *.c)
+        OBJS := $(SRCS:.c=.o)
+
+        all: sukisu_ultra_surya_a14.kpm
+
+        %.o: %.c
+        	$(CC) $(CFLAGS) -c $< -o $@
+
+        sukisu_ultra_surya_a14.kpm: $(OBJS)
+        	$(LD) $(LDFLAGS) -T hello.lds $(OBJS) -o $@
+        	$(OBJCOPY) --strip-unneeded $@
+
+        clean:
+        	rm -f *.o *.kpm
+        EOF
+
+    - name: Build Standalone Relocatable KPM Binary
+      run: |
+        cd $GITHUB_WORKSPACE/sukisu_src
         
-        # Execute compiling sequence using standalone KPM rules from KernelPatch docs
-        make clean
-        make ARCH=arm64 EXTRA_CFLAGS="-DCONFIG_KSU_SUSFS=1 -DCONFIG_KPM=1 -DANDROID_VERSION=14"
+        # Run compiler natively using our generated rule parameters
+        make
         
-        # Process and track artifact outputs
-        if [ -f "sukisu_ultra_susfs.kpm" ] || [ -f "kpm.kpm" ]; then
-            mv *.kpm $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm
+        # Isolate and save the final payload file safely
+        if [ -f "sukisu_ultra_surya_a14.kpm" ]; then
+            cp sukisu_ultra_surya_a14.kpm $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm
             echo "KPM package built flawlessly."
         else
-            # Fallback handling based on file naming parameters inside the repository Makefile rules
-            mv *.ko $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm || cp hello.kpm $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm || echo "Export sequence completed"
+            echo "::error::Compilation failed, output payload tracking trace missing!" && exit 1
         fi
 
-    - name: Save and Upload Finished KPM
+    - name: Save and Upload Finished KPM Payload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: SukiSU-Ultra-Surya-A14-KPM
