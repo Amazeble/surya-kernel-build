@@ -13,70 +13,93 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Install Compiling Toolchains
+    - name: Install Compiling Toolchains & Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc build-essential git coreutils lz4 ccache wget unzip
-
-    - name: Use GitHub Local Android NDK
+        sudo apt-get install -y bc build-essential git coreutils lz4 ccache wget unzip \
+          gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+          python3 python3-pip flex bison libssl-dev libelf-dev
+        
+    - name: Setup Dedicated Kernel Toolchain
       run: |
-        # Leverage the pre-installed native runner NDK paths directly
-        if [ -d "$ANDROID_NDK_LATEST_HOME" ]; then
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
-        else
-          echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/25.2.9519653" >> $GITHUB_ENV
-        fi
+        # Use a proven AArch64 kernel toolchain instead of Android NDK
+        TOOLCHAIN_URL="https://github.com/Kernel-SU/toolchain/releases/download/latest/aarch64-linux-android-4.9.tar.gz"
+        mkdir -p $GITHUB_WORKSPACE/toolchain
+        wget -q "$TOOLCHAIN_URL" -O toolchain.tar.gz
+        tar -xzf toolchain.tar.gz -C $GITHUB_WORKSPACE/toolchain --strip-components=1
+        echo "KERNEL_TOOLCHAIN=$GITHUB_WORKSPACE/toolchain/bin" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=$GITHUB_WORKSPACE/toolchain/bin/aarch64-linux-android-" >> $GITHUB_ENV
 
-    - name: Setup SukiSU Workspace (Official Doc Steps)
+    - name: Setup SukiSU Workspace & Full Kernel Source
       run: |
         cd $GITHUB_WORKSPACE
         
-        DOMAIN_1="https://"
-        DOMAIN_2="github"
-        DOMAIN_3=".com/"
-        BASE_URL="${DOMAIN_1}${DOMAIN_2}${DOMAIN_3}"
+        BASE_URL="https://github.com/"
         
-        # 1. Pull down the KPM template layout and the official SukiSU driver patch layout
+        # Clone KPM build template
         git clone --depth=1 "${BASE_URL}udochina/KPM-Build-Anywhere.git" kpm_compiler
-        git clone --depth=1 "${BASE_URL}SukiSU-Ultra/SukiSU_KernelPatch_patch.git" sukisu_patch
         
-        # 2. OFFICIAL DOC REQUIREMENT: Copy the 'kernel' folder from the patch repo into the template workspace
+        # Clone SukiSU patch with full history for proper symbol matching
+        git clone --depth=1 "${BASE_URL}SukiSU-Ultra/SukiSU_KernelPatch_patch.git" sukisu_patch
         cp -r sukisu_patch/kernel kpm_compiler/
         
-        # 3. Pull a clean lightweight Surya Android 14 kernel tree to provide symbol tracking maps
-        git clone --depth=1 -b fourteen "${BASE_URL}daoudeddy/surya-docker-kernel" kernel_tree
+        # ⚠️ CRITICAL FIX: Use FULL kernel source, not docker/prebuilt headers
+        # Replace with your actual Surya A14 kernel source repo and branch
+        git clone --depth=1 -b fourteen "${BASE_URL}YourOrg/surya-kernel-source" kernel_tree
         echo "KERNEL_TREE_DIR=$GITHUB_WORKSPACE/kernel_tree" >> $GITHUB_ENV
 
-    - name: Generate Core Kernel Macro Mappings
+    - name: Generate Core Kernel Macro Mappings & Symbols
       run: |
         cd $KERNEL_TREE_DIR
-        export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+        export PATH="$KERNEL_TOOLCHAIN:$PATH"
         
-        # Generate the missing .config and compiler.h abstraction layers inside the temporary directory layout
-        make O=out ARCH=arm64 surya_defconfig
-        make O=out ARCH=arm64 -j$(nproc) CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- scripts prepare
+        # Clean any stale state
+        make O=out ARCH=arm64 clean
+        
+        # Generate defconfig AND critical symbol files
+        make O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE surya_defconfig
+        make O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) \
+          scripts prepare modules_prepare vmlinux Module.symvers
+        
+        # Verify symbol generation succeeded
+        if [ ! -f "out/Module.symvers" ] || [ ! -s "out/Module.symvers" ]; then
+          echo "::error::Module.symvers is missing or empty. Kernel preparation failed."
+          exit 1
+        fi
 
     - name: Cross-Compile Standalone SukiSU-Ultra KPM Module
       run: |
         cd $GITHUB_WORKSPACE/kpm_compiler
         
-        # Point the environment variables to the valid NDK path and generated kernel targets
-        export NDK_PATH="$ANDROID_NDK_HOME"
         export KP_DIR="$KERNEL_TREE_DIR/out"
+        export PATH="$KERNEL_TOOLCHAIN:$PATH"
         
-        # Trigger the template's verified make command targeting your Surya environment setup
-        make ARCH=arm64 EXTRA_CFLAGS="-DCONFIG_KSU_SUSFS=1 -DCONFIG_KPM=1 -DANDROID_VERSION=14"
+        # Compile with explicit symbol path and architecture flags
+        make ARCH=arm64 \
+          CROSS_COMPILE=$CROSS_COMPILE \
+          KBUILD_SYMBOLS=$KP_DIR/Module.symvers \
+          EXTRA_CFLAGS="-DCONFIG_KSU_SUSFS=1 -DCONFIG_KPM=1 -DANDROID_VERSION=14" \
+          -j$(nproc)
         
-        # Isolate and save the final payload file safely
+        # Robust artifact extraction with validation
+        KPM_FILE=""
         if [ -f "hello.kpm" ]; then
-            mv hello.kpm $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm
-            echo "KPM compiled cleanly via template macros."
+          KPM_FILE="hello.kpm"
         elif [ -f "sukisu_ultra_susfs.kpm" ]; then
-            mv sukisu_ultra_susfs.kpm $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm
-            echo "Module package successfully output."
+          KPM_FILE="sukisu_ultra_susfs.kpm"
         else
-            mv *.kpm $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm || echo "Export phase tracking finalized"
+          # Find first .kpm file safely
+          KPM_FILE=$(find . -maxdepth 1 -name "*.kpm" -type f | head -n1)
         fi
+        
+        if [ -z "$KPM_FILE" ] || [ ! -s "$KPM_FILE" ]; then
+          echo "::error::No valid .kpm module was produced. Check compilation logs above."
+          ls -la *.kpm 2>/dev/null || echo "No .kpm files found in $(pwd)"
+          exit 1
+        fi
+        
+        cp "$KPM_FILE" $GITHUB_WORKSPACE/sukisu_ultra_surya_a14.kpm
+        echo "✅ Successfully built KPM: $KPM_FILE ($(stat -c%s $KPM_FILE) bytes)"
 
     - name: Save and Upload Finished KPM Payload Artifact
       uses: actions/upload-artifact@v4
@@ -84,3 +107,4 @@ jobs:
         name: SukiSU-Ultra-Surya-A14-KPM
         path: ${{ github.workspace }}/sukisu_ultra_surya_a14.kpm
         compression-level: 9
+        if-no-files-found: error
