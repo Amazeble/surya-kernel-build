@@ -17,15 +17,16 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev \
-          bison flex libelf-dev git coreutils lz4 ccache wget unzip
+          bison flex libelf-dev git coreutils lz4 ccache
 
-    - name: Download and Install Android NDK Manually
+    - name: Use GitHub Local Android NDK
       run: |
-        cd $GITHUB_WORKSPACE
-        wget -q https://google.com
-        unzip -q android-ndk-r26b-linux.zip
-        rm android-ndk-r26b-linux.zip
-        echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-r26b" >> $GITHUB_ENV
+        # Use the native pre-installed NDK from the GitHub runner environment
+        if [ -d "$ANDROID_NDK_LATEST_HOME" ]; then
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+        else
+          echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/25.2.9519653" >> $GITHUB_ENV
+        fi
 
     - name: Download SukiSU & Module Workspaces
       run: |
