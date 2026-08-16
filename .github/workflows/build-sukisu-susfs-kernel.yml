@@ -61,8 +61,9 @@ jobs:
 
           # Download GCC fallbacks required by some kernels
           echo "Downloading GCC Toolchains..."
-          git clone --depth=1 https://github.com/arter97/aarch64-linux-gnu.git $HOME/gcc-64
-          git clone --depth=1 https://github.com/arter97/arm-linux-gnueabi.git $HOME/gcc-32
+          # Using arter97 GCC toolchains from GitLab (reliable mirrors for ARM cross-compilation)
+          git clone --depth=1 https://gitlab.com/arter97/aarch64-linux-gnu.git $HOME/gcc-64
+          git clone --depth=1 https://gitlab.com/arter97/arm-linux-gnueabi.git $HOME/gcc-32
 
           # Prepend to PATH so clang/lld from proton-clang take precedence
           echo "$HOME/proton-clang/bin" >> $GITHUB_PATH
