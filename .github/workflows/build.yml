@@ -1,206 +1,99 @@
-name: Build Surya Android 14 Kernel
+name: Build SukiSU-Ultra + SUSFS Kernel
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Force Ubuntu 22.04 to avoid the broken 24.04 apt package bugs in third-party actions
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
     steps:
-      - name: Checkout Your Repository Files
+      - name: Checkout Kernel Source
         uses: actions/checkout@v4
+        with:
+          repository: Amazeble/android_kernel_xiaomi_surya
+          ref: "16.0"
+          path: kernel-source
 
-      - name: Install Compiling Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev ccache bison flex libelf-dev clang lld python3 wget zip unzip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
-
-      - name: Clone Poco X3 NFC Kernel Source
-        run: |
-          DOMAIN="https://github.com"
-          PATH_PART="/LineageOS/android_kernel_xiaomi_surya.git"
-          git clone --depth=1 -b lineage-22.2 "${DOMAIN}${PATH_PART}" kernel-source
-
-      - name: Integrate KernelSU Source Code
+      - name: Inject SukiSU-Ultra and SUSFS
         run: |
           cd kernel-source
-          DOMAIN="https://raw.githubusercontent.com"
-          PATH_PART="/tiann/KernelSU/main/kernel/setup.sh"
-          curl -LSs "${DOMAIN}${PATH_PART}" | bash -s main
-
-      - name: Apply Your Custom Configuration Layout
-        run: |
-          if [ -f "$GITHUB_WORKSPACE/my_current_config" ]; then
-            cp "$GITHUB_WORKSPACE/my_current_config" kernel-source/arch/arm64/configs/surya_defconfig
-          else
-            echo "Warning: my_current_config not found, using existing defconfig"
-          fi
-
-      - name: Download Google / Proton Clang Toolchain
-        run: |
-          # Skip external clang download - use system clang from apt instead
-          # External pre-built clang has glibc compatibility issues with ubuntu-latest
-          echo "Using system clang toolchain"
-
-      - name: Fix Broken DTS Files (Preserve DT Overlay Support)
-        run: |
-          echo "=== Attempting to fix DTS syntax errors to preserve DT Overlay support ==="
           
+          # Apply official SukiSU-Ultra SUSFS patch
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          
+          # Ensure SUSFS and KPM are enabled in the defconfig
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/surya_defconfig
+          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/surya_defconfig
+          echo "CONFIG_KPM=y" >> arch/arm64/configs/surya_defconfig
+
+      - name: Setup Toolchains
+        run: |
+          # Download Proton-Clang
+          echo "Downloading Proton-Clang..."
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang $HOME/proton-clang
+          
+          # Download GCC fallbacks required by 4.14 kernels
+          echo "Downloading GCC Toolchains..."
+          git clone --depth=1 https://github.com/arter97/arm64-gcc.git $HOME/gcc-64
+          git clone --depth=1 https://github.com/arter97/arm-gcc.git $HOME/gcc-32
+          
+          # Add to PATH
+          echo "$HOME/proton-clang/bin" >> $GITHUB_PATH
+          echo "$HOME/gcc-64/bin" >> $GITHUB_PATH
+          echo "$HOME/gcc-32/bin" >> $GITHUB_PATH
+
+      - name: Build Kernel
+        run: |
           cd kernel-source
           
-          # List of known broken files from logs
-          BROKEN_FILES=(
-            "arch/arm64/boot/dts/qcom/sdmmagpie-thermal-overlay.dtsi"
-            "arch/arm64/boot/dts/qcom/dsi-panel-sim-video.dtsi"
-          )
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CC=clang
           
-          for file in "${BROKEN_FILES[@]}"; do
-            if [ -f "$file" ]; then
-              echo "Checking $file..."
-              
-              # Fix 1: Remove git merge conflict markers (common cause of syntax errors)
-              sed -i '/^<<<<<<< /d; /^=======/d; /^>>>>>>> /d' "$file"
-              
-              # Fix 2: Remove duplicate empty lines that might confuse parser
-              sed -i '/^$/N;/^\n$/d' "$file"
-              
-              # Fix 3: Use Python for robust semicolon fixing
-              python3 << EOF
-import re
-
-with open("$file", "r") as f:
-    content = f.read()
-
-# Fix missing semicolons after property values
-# Pattern: word = value (without semicolon) followed by newline and closing brace or new property
-content = re.sub(r'(\s*=\s*<[^>]+>)\s*\n(\s*[};])', r'\1;\n\2', content)
-content = re.sub(r'(\s*=\s*"[^"]+")\s*\n(\s*[};])', r'\1;\n\2', content)
-content = re.sub(r'(\s*=\s*\w+)\s*\n(\s*[};])', r'\1;\n\2', content)
-
-# Ensure all property lines end with semicolon if they don't end with { or }
-lines = content.split('\n')
-fixed_lines = []
-for line in lines:
-    stripped = line.strip()
-    # Check if it's a property assignment line
-    if re.match(r'^[\w-]+\s*=', stripped):
-        if not stripped.endswith(';') and not stripped.endswith('{') and not stripped.endswith('}'):
-            line = line.rstrip() + ';'
-    fixed_lines.append(line)
-
-content = '\n'.join(fixed_lines)
-
-with open("$file", "w") as f:
-    f.write(content)
-EOF
-              
-              # Fix 4: Clean up duplicate semicolons
-              sed -i 's/;;/;/g' "$file"
-              
-              # Show the fixed content around line 15 (where error occurred)
-              echo "  -> Fixed content around line 15:"
-              sed -n '10,20p' "$file"
-              echo "  -> Applied automatic fixes to $file"
-            else
-              echo "  -> $file not found, skipping"
-            fi
-          done
-          
-          cd ..
-          echo "DTS fix attempt completed. Proceeding with build..."
-
-      - name: Compile the Kernel Image
-        run: |
-          set -e
-          cd kernel-source
+          # Make output directory
           mkdir -p out
-          echo "=== Starting kernel configuration ==="
           
-          # Run defconfig first
-          make ARCH=arm64 O=out surya_defconfig
+          # Generate config
+          make O=out surya_defconfig
           
-          # Keep DT overlay support ENABLED (as requested)
-          # Only disable specific broken overlays if auto-fix fails
-          
-          # Ensure rtl8812au driver is enabled (required for Realtek USB WiFi adapters)
-          # KernelSU integration may enable this, but we ensure it explicitly
-          sed -i 's/# CONFIG_RTL8812AU is not set/CONFIG_RTL8812AU=m/' out/.config
-          sed -i 's/# CONFIG_RTL8XXXU is not set/CONFIG_RTL8XXXU=m/' out/.config
-          
-          echo "=== Verifying configuration ==="
-          grep -E "CONFIG_BUILD_ARM64_DT_OVERLAY|CONFIG_RTL8812AU|CONFIG_RTL8XXXU" out/.config || echo "Config check done"
-          
-          echo "=== Starting kernel compilation ==="
-          
-          # Run make and capture all output
-          make -j$(nproc --all) ARCH=arm64 O=out \
+          # Compile Kernel
+          make -j$(nproc --all) O=out \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            2>&1 | tee ../build.log
-          
-          BUILD_STATUS=${PIPESTATUS[0]}
-          
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo "=== Kernel compilation FAILED with exit code $BUILD_STATUS ==="
-            echo ""
-            echo "=== FULL BUILD LOG (last 300 lines) ==="
-            tail -n 300 ../build.log
-            echo ""
-            echo "=== Searching for specific error patterns ==="
-            echo "--- Lines containing 'error:' ---"
-            grep -i "error:" ../build.log | tail -100 || echo "No 'error:' patterns found"
-            echo ""
-            echo "--- Lines containing 'fatal:' ---"
-            grep -i "fatal" ../build.log | tail -50 || echo "No 'fatal' patterns found"
-            echo ""
-            echo "--- Last command before failure ---"
-            tail -n 50 ../build.log | head -n 20
-            exit 1
-          fi
-          
-          echo "=== Kernel compilation completed successfully ==="
-          ls -lh out/arch/arm64/boot/
+            HOSTCC=clang \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            STRIP=llvm-strip \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            OBJSIZE=llvm-size \
+            READELF=llvm-readelf
 
-      - name: Package with AnyKernel3
+      - name: Package AnyKernel3 Zip
         run: |
-          set -e
-          DOMAIN="https://github.com"
-          PATH_PART="/osm0sis/AnyKernel3.git"
-          git clone --depth=1 "${DOMAIN}${PATH_PART}"
-          
-          echo "=== Checking for kernel image files ==="
-          ls -lh kernel-source/out/arch/arm64/boot/ || true
-          
-          # Check what files actually exist
-          KERNEL_IMAGE=""
-          if [ -f kernel-source/out/arch/arm64/boot/Image.gz-dtb ]; then
-            KERNEL_IMAGE="Image.gz-dtb"
-          elif [ -f kernel-source/out/arch/arm64/boot/Image.gz ]; then
-            KERNEL_IMAGE="Image.gz"
-          elif [ -f kernel-source/out/arch/arm64/boot/Image ]; then
-            KERNEL_IMAGE="Image"
-          fi
-          
-          if [ -z "$KERNEL_IMAGE" ]; then
-            echo "ERROR: No kernel image found!"
-            echo ""
-            echo "Searching entire output directory:"
-            find kernel-source/out -type f -name "*Image*" 2>/dev/null || echo "No Image files found"
-            echo ""
-            echo "Directory structure:"
-            ls -laR kernel-source/out/arch/arm64/boot/ 2>/dev/null || echo "boot directory doesn't exist"
-            exit 1
-          fi
-          
-          echo "Found $KERNEL_IMAGE, copying to AnyKernel3..."
-          cp "kernel-source/out/arch/arm64/boot/$KERNEL_IMAGE" AnyKernel3/
+          # Clone a generic AnyKernel3 template
+          git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
-          zip -r9 ../surya-custom-kernel.zip *
+          
+          # Copy the compiled kernel image to AnyKernel3
+          cp ../kernel-source/out/arch/arm64/boot/Image.gz .
+          
+          # Zip it up
+          zip -r9 SukiSU-SUSFS-Surya.zip *
+          
+          # Move to workspace root for upload
+          mv SukiSU-SUSFS-Surya.zip $GITHUB_WORKSPACE/
 
-      - name: Upload Finished Flashable Kernel Zip
+      - name: Upload Kernel Zip
         uses: actions/upload-artifact@v4
         with:
-          name: Surya-Custom-Kernel-Package
-          path: surya-custom-kernel.zip
+          name: Surya-A14-SukiSU-SUSFS
+          path: ${{ github.workspace }}/SukiSU-SUSFS-Surya.zip
