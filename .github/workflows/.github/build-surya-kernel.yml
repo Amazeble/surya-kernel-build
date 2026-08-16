@@ -1,0 +1,48 @@
+name: Build SukiSU/SUSFS Kernel for Surya A14
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_SOURCE:
+        description: 'Kernel Source URL'
+        required: true
+        default: 'https://github.com/LineageOS/android_kernel_xiaomi_surya' # TODO: Replace with your actual A14 kernel source
+      KERNEL_BRANCH:
+        description: 'Kernel Branch'
+        required: true
+        default: 'lineage-21.0' # TODO: Replace with correct A14 branch
+      DEFCONFIG:
+        description: 'Defconfig File'
+        required: true
+        default: 'lineage_surya_defconfig' # TODO: Replace with correct defconfig in arch/arm64/configs/
+      ANYKERNEL3_URL:
+        description: 'AnyKernel3 Template URL'
+        required: true
+        default: 'https://github.com/osm0sis/AnyKernel3' # TODO: Use a Surya-specific AnyKernel3 if available
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout KernelSU Action
+        uses: actions/checkout@v4
+        with:
+          repository: xiaoleGun/KernelSU_Action
+          path: kernel-builder
+
+      - name: Build Kernel with SUSFS
+        uses: ./kernel-builder
+        with:
+          kernel-source: ${{ github.event.inputs.KERNEL_SOURCE }}
+          kernel-branch: ${{ github.event.inputs.KERNEL_BRANCH }}
+          defconfig: ${{ github.event.inputs.DEFCONFIG }}
+          arch: arm64
+          ksu: true
+          susfs: true
+          anykernel3-url: ${{ github.event.inputs.ANYKERNEL3_URL }}
+          
+      - name: Upload AnyKernel3 Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Surya-A14-SUSFS-Kernel
+          path: output/*.zip
