@@ -35,6 +35,7 @@ jobs:
           kernel-url: ./kernel-source/
           config: surya_defconfig
           arch: arm64
+          android-version: "14"
           aosp-gcc: true
           aosp-clang: true
           anykernel3: true
