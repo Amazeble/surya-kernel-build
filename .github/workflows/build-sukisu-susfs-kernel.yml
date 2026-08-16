@@ -20,50 +20,92 @@ jobs:
 
       - name: Inject SukiSU-Ultra and SUSFS
         run: |
+          set -euo pipefail
           cd kernel-source
-          
-          # Apply official SukiSU-Ultra SUSFS patch
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-          
-          # Ensure SUSFS and KPM are enabled in the defconfig
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/surya_defconfig
-          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/surya_defconfig
-          echo "CONFIG_KPM=y" >> arch/arm64/configs/surya_defconfig
+
+          # Prefer the expected defconfig but accept alternate common names
+          DEFCONFIG_CANDIDATES=(arch/arm64/configs/surya_defconfig arch/arm64/configs/lineage_surya_defconfig)
+          DEFCONFIG_FILE=""
+          for f in "${DEFCONFIG_CANDIDATES[@]}"; do
+            if [ -f "$f" ]; then
+              DEFCONFIG_FILE="$f"
+              break
+            fi
+          done
+
+          echo "Using defconfig: ${DEFCONFIG_FILE:-(none)}"
+
+          # Download and run SukiSU-Ultra setup script safely (don't pipe remote scripts directly)
+          echo "Fetching SukiSU-Ultra setup script..."
+          curl -fsSLo suki_setup.sh "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh"
+          bash suki_setup.sh susfs-main
+
+          # Ensure SUSFS and KPM are enabled in the defconfig (idempotent)
+          if [ -n "$DEFCONFIG_FILE" ]; then
+            grep -q "^CONFIG_KSU=" "$DEFCONFIG_FILE" || echo "CONFIG_KSU=y" >> "$DEFCONFIG_FILE"
+            grep -q "^CONFIG_KSU_SUSFS=" "$DEFCONFIG_FILE" || echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG_FILE"
+            grep -q "^CONFIG_KPM=" "$DEFCONFIG_FILE" || echo "CONFIG_KPM=y" >> "$DEFCONFIG_FILE"
+          else
+            echo "Defconfig not found; listing arch/arm64/configs for debugging:" >&2
+            ls -la arch/arm64/configs || true
+            exit 1
+          fi
 
       - name: Setup Toolchains
         run: |
-          # Download Proton-Clang
+          set -euxo pipefail
+
+          # Download Proton-Clang (shallow clone). Pinning a commit or release is recommended for reproducibility.
           echo "Downloading Proton-Clang..."
           git clone --depth=1 https://github.com/kdrag0n/proton-clang $HOME/proton-clang
-          
-          # Download GCC fallbacks required by 4.14 kernels
+
+          # Download GCC fallbacks required by some kernels
           echo "Downloading GCC Toolchains..."
           git clone --depth=1 https://github.com/arter97/arm64-gcc.git $HOME/gcc-64
           git clone --depth=1 https://github.com/arter97/arm-gcc.git $HOME/gcc-32
-          
-          # Add to PATH
+
+          # Prepend to PATH so clang/lld from proton-clang take precedence
           echo "$HOME/proton-clang/bin" >> $GITHUB_PATH
           echo "$HOME/gcc-64/bin" >> $GITHUB_PATH
           echo "$HOME/gcc-32/bin" >> $GITHUB_PATH
 
       - name: Build Kernel
         run: |
+          set -euxo pipefail
           cd kernel-source
-          
+
+          # Detect the defconfig used earlier (same candidates)
+          DEFCONFIG_CANDIDATES=(surya_defconfig lineage_surya_defconfig)
+          USED_DEFCONFIG=""
+          for f in "${DEFCONFIG_CANDIDATES[@]}"; do
+            if [ -f "arch/arm64/configs/$f" ]; then
+              USED_DEFCONFIG="$f"
+              break
+            fi
+          done
+
+          if [ -z "$USED_DEFCONFIG" ]; then
+            echo "No known defconfig found in arch/arm64/configs" >&2
+            ls -la arch/arm64/configs
+            exit 1
+          fi
+
           export ARCH=arm64
           export SUBARCH=arm64
+          # Expect gcc toolchains to provide these triples; adjust if the toolchains expose different prefixes
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CC=clang
-          
+
           # Make output directory
           mkdir -p out
-          
-          # Generate config
-          make O=out surya_defconfig
-          
-          # Compile Kernel
-          make -j$(nproc --all) O=out \
+
+          # Generate config (using the discovered defconfig)
+          make O=out ${USED_DEFCONFIG}
+
+          # Compile Kernel and build image/dtbs/modules explicitly
+          MAKEFLAGS="-j$(nproc --all) O=out"
+          make $MAKEFLAGS \
             CC=clang \
             HOSTCC=clang \
             LLVM=1 \
@@ -75,22 +117,54 @@ jobs:
             OBJCOPY=llvm-objcopy \
             OBJDUMP=llvm-objdump \
             OBJSIZE=llvm-size \
-            READELF=llvm-readelf
+            READELF=llvm-readelf Image.gz-dtb dtbs modules || true
+
+          # If Image.gz-dtb wasn't produced, try to build common image targets
+          IMAGE_DIR=out/arch/arm64/boot
+          if ! compgen -G "$IMAGE_DIR/Image*" >/dev/null && ! compgen -G "$IMAGE_DIR/zImage*" >/dev/null; then
+            echo "No kernel image found after build; attempting 'make Image' fallback"
+            make $MAKEFLAGS Image || true
+          fi
 
       - name: Package AnyKernel3 Zip
         run: |
+          set -euxo pipefail
+
           # Clone a generic AnyKernel3 template
-          git clone https://github.com/osm0sis/AnyKernel3.git
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
-          
-          # Copy the compiled kernel image to AnyKernel3
-          cp ../kernel-source/out/arch/arm64/boot/Image.gz .
-          
-          # Zip it up
+
+          IMAGE_DIR=../kernel-source/out/arch/arm64/boot
+          # Find a suitable kernel image (Image, Image.gz, Image.gz-dtb, zImage, etc.)
+          IMAGE=$(ls "$IMAGE_DIR"/Image* "$IMAGE_DIR"/zImage* "$IMAGE_DIR"/Image.gz-dtb "$IMAGE_DIR"/Image.gz 2>/dev/null | head -n1 || true)
+          if [ -z "$IMAGE" ]; then
+            echo "No kernel image found in $IMAGE_DIR" >&2
+            ls -la "$IMAGE_DIR" || true
+            exit 1
+          fi
+
+          echo "Found kernel image: $IMAGE"
+          cp "$IMAGE" .
+
+          # Include dtbs if present
+          if compgen -G "../kernel-source/out/arch/arm64/boot/dts/*" >/dev/null 2>&1; then
+            mkdir -p dts
+            cp -r ../kernel-source/out/arch/arm64/boot/dts/* dts/ || true
+          fi
+
+          # Create zip
           zip -r9 SukiSU-SUSFS-Surya.zip *
-          
+
           # Move to workspace root for upload
           mv SukiSU-SUSFS-Surya.zip $GITHUB_WORKSPACE/
+
+      - name: Ensure artifact exists
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/SukiSU-SUSFS-Surya.zip" ]; then
+            echo "Artifact not found: $GITHUB_WORKSPACE/SukiSU-SUSFS-Surya.zip" >&2
+            ls -la $GITHUB_WORKSPACE || true
+            exit 1
+          fi
 
       - name: Upload Kernel Zip
         uses: actions/upload-artifact@v4
