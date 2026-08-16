@@ -29,6 +29,13 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/surya_defconfig
           echo "CONFIG_KPM=y" >> arch/arm64/configs/surya_defconfig
 
+      - name: Fix Action Bug & Provide GCC Fallback
+        run: |
+          # The action crashes if these folders don't exist, so we provide a proven 4.14 GCC toolchain
+          echo "Bypassing hardcoded gcc-64 check..."
+          git clone --depth=1 https://github.com/arter97/arm64-gcc.git /home/runner/gcc-64
+          git clone --depth=1 https://github.com/arter97/arm-gcc.git /home/runner/gcc-32
+
       - name: Build Kernel with AnyKernel3
         uses: dabao1955/kernel_build_action@main
         with:
@@ -37,11 +44,11 @@ jobs:
           arch: arm64
           android-version: "14"
           
-          # DISABLE all broken AOSP/Google downloads
+          # We handle toolchains manually now to avoid action bugs
           aosp-clang: false
           aosp-gcc: false
           
-          # USE only Proton-Clang (Reliable, works for 4.14 kernels)
+          # Primary compiler is Proton-Clang
           other-clang-url: https://github.com/kdrag0n/proton-clang
           other-clang-branch: master
           
