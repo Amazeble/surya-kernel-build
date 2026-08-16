@@ -5,7 +5,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Force Ubuntu 22.04 to avoid the broken 24.04 apt package bugs in third-party actions
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
 
@@ -29,27 +30,70 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/surya_defconfig
           echo "CONFIG_KPM=y" >> arch/arm64/configs/surya_defconfig
 
-      - name: Fix Action Bug & Provide GCC Fallback
+      - name: Setup Toolchains
         run: |
-          # The action crashes if these folders don't exist, so we provide a proven 4.14 GCC toolchain
-          echo "Bypassing hardcoded gcc-64 check..."
-          git clone --depth=1 https://github.com/arter97/arm64-gcc.git /home/runner/gcc-64
-          git clone --depth=1 https://github.com/arter97/arm-gcc.git /home/runner/gcc-32
+          # Download Proton-Clang
+          echo "Downloading Proton-Clang..."
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang $HOME/proton-clang
+          
+          # Download GCC fallbacks required by 4.14 kernels
+          echo "Downloading GCC Toolchains..."
+          git clone --depth=1 https://github.com/arter97/arm64-gcc.git $HOME/gcc-64
+          git clone --depth=1 https://github.com/arter97/arm-gcc.git $HOME/gcc-32
+          
+          # Add to PATH
+          echo "$HOME/proton-clang/bin" >> $GITHUB_PATH
+          echo "$HOME/gcc-64/bin" >> $GITHUB_PATH
+          echo "$HOME/gcc-32/bin" >> $GITHUB_PATH
 
-      - name: Build Kernel with AnyKernel3
-        uses: dabao1955/kernel_build_action@main
+      - name: Build Kernel
+        run: |
+          cd kernel-source
+          
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CC=clang
+          
+          # Make output directory
+          mkdir -p out
+          
+          # Generate config
+          make O=out surya_defconfig
+          
+          # Compile Kernel
+          make -j$(nproc --all) O=out \
+            CC=clang \
+            HOSTCC=clang \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            STRIP=llvm-strip \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            OBJSIZE=llvm-size \
+            READELF=llvm-readelf
+
+      - name: Package AnyKernel3 Zip
+        run: |
+          # Clone a generic AnyKernel3 template
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+          
+          # Copy the compiled kernel image to AnyKernel3
+          cp ../kernel-source/out/arch/arm64/boot/Image.gz .
+          
+          # Zip it up
+          zip -r9 SukiSU-SUSFS-Surya.zip *
+          
+          # Move to workspace root for upload
+          mv SukiSU-SUSFS-Surya.zip $GITHUB_WORKSPACE/
+
+      - name: Upload Kernel Zip
+        uses: actions/upload-artifact@v4
         with:
-          kernel-url: ./kernel-source/
-          config: surya_defconfig
-          arch: arm64
-          android-version: "14"
-          
-          # We handle toolchains manually now to avoid action bugs
-          aosp-clang: false
-          aosp-gcc: false
-          
-          # Primary compiler is Proton-Clang
-          other-clang-url: https://github.com/kdrag0n/proton-clang
-          other-clang-branch: master
-          
-          anykernel3: true
+          name: Surya-A14-SukiSU-SUSFS
+          path: ${{ github.workspace }}/SukiSU-SUSFS-Surya.zip
